@@ -1,0 +1,121 @@
+-- Step 2: Define the Audit Tables
+CREATE TABLE DB_AUDIT.APP_AUDIT_TABLE (
+    TABLE_ID NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    TABLE_NAME VARCHAR2(255) NOT NULL UNIQUE,
+    TABLE_DESCRIPTION VARCHAR2(500),
+    START_DATE TIMESTAMP DEFAULT SYSTIMESTAMP,
+    END_DATE TIMESTAMP,
+    PURGE CHAR(1) DEFAULT 'N' CHECK (PURGE IN ('Y', 'N')),
+    COLUMNS VARCHAR2(4000) NOT NULL -- List of columns being audited
+);
+
+SELECT * FROM DB_AUDIT.APP_AUDIT_TABLE;
+
+DROP TABLE DB_AUDIT.APP_AUDIT_DATA;
+
+CREATE TABLE DB_AUDIT.APP_AUDIT_DATA (
+    AUDIT_DATA_ID NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    TABLE_ID NUMBER NOT NULL,
+    AUDIT_DATA CLOB, -- Stores previous values before changes
+    CTL_INS_DTTM TIMESTAMP DEFAULT SYSTIMESTAMP,
+    CTL_UPD_USER VARCHAR2(255) DEFAULT USER,
+    CTL_REC_STAT CHAR(1) DEFAULT 'A' CHECK (CTL_REC_STAT IN ('A', 'I')),
+    
+    CONSTRAINT FK_AUDIT_TABLE FOREIGN KEY (TABLE_ID) REFERENCES DB_AUDIT.APP_AUDIT_TABLE(TABLE_ID)
+);
+
+-- Create a sample TEST_TABLE table
+DROP TABLE DB_AUDIT.TEST_TABLE;
+CREATE TABLE DB_AUDIT.TEST_TABLE (
+    USER_ID NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    USERNAME VARCHAR2(255) NOT NULL,
+    EMAIL VARCHAR2(255) NOT NULL
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON DB_AUDIT.TEST_TABLE TO SCOTT;
+
+-- Step 3: Create the Trigger for Column-Level Auditing
+CREATE OR REPLACE TRIGGER DB_AUDIT.TRG_COLUMN_AUDIT
+BEFORE UPDATE ON DB_AUDIT.TEST_TABLE
+FOR EACH ROW
+DECLARE
+    v_table_id NUMBER;
+    v_columns VARCHAR2(4000);
+    v_old_values CLOB;
+BEGIN
+    -- Get the Table ID and Audited Columns
+    SELECT TABLE_ID, COLUMNS INTO v_table_id, v_columns 
+    FROM DB_AUDIT.APP_AUDIT_TABLE 
+    WHERE TABLE_NAME = 'TEST_TABLE';
+    
+    -- Capture old values for audited columns
+    v_old_values := '';
+    IF INSTR(v_columns, 'USERNAME') > 0 THEN
+        v_old_values := v_old_values || 'USERNAME: ' || :OLD.USERNAME || '; ';
+    END IF;
+    IF INSTR(v_columns, 'EMAIL') > 0 THEN
+        v_old_values := v_old_values || 'EMAIL: ' || :OLD.EMAIL || '; ';
+    END IF;
+    
+    -- Insert into Audit Data if any column value changed
+    IF v_old_values IS NOT NULL THEN
+        INSERT INTO DB_AUDIT.APP_AUDIT_DATA (TABLE_ID, AUDIT_DATA, CTL_UPD_USER)
+        VALUES (v_table_id, v_old_values, USER);
+    END IF;
+END;
+/
+
+-- NEED TO CHECK THE BELOW FOR PROPER FUNCTION.
+-- Step 4: Implement Purging Mechanism (Scheduled Job for Archiving Old Data)
+DROP PROCEDURE DB_AUDIT.PURGE_OLD_AUDIT_DATA;
+CREATE OR REPLACE PROCEDURE DB_AUDIT.PURGE_OLD_AUDIT_DATA IS
+BEGIN
+    DELETE FROM DB_AUDIT.APP_AUDIT_DATA
+    WHERE CTL_INS_DTTM < ADD_MONTHS(SYSDATE, -12)
+    AND TABLE_ID IN (SELECT TABLE_ID FROM DB_AUDIT.APP_AUDIT_TABLE WHERE PURGE = 'Y');
+    COMMIT;
+END;
+/
+
+-- Step 5: Schedule the Purging Procedure (Run Monthly)
+BEGIN
+    DBMS_SCHEDULER.CREATE_JOB (
+        job_name        => 'PURGE_AUDIT_DATA_JOB',
+        job_type        => 'PLSQL_BLOCK',
+        job_action      => 'BEGIN DB_AUDIT.PURGE_OLD_AUDIT_DATA; END;',
+        start_date      => SYSTIMESTAMP,
+        repeat_interval => 'FREQ=MONTHLY; BYDAY=1',
+        enabled         => TRUE
+    );
+END;
+/
+
+-- Step 6: Test Cases
+SELECT * FROM DB_AUDIT.TEST_TABLE;
+DELETE FROM DB_AUDIT.TEST_TABLE;
+
+-- Insert a test record into APP_AUDIT_TABLE
+SELECT * FROM DB_AUDIT.APP_AUDIT_TABLE;
+
+INSERT INTO DB_AUDIT.APP_AUDIT_TABLE (TABLE_NAME, TABLE_DESCRIPTION, COLUMNS)
+VALUES ('TEST_TABLE', 'User details table', 'USERNAME,EMAIL');
+COMMIT;
+
+-- Insert a test record into TEST_TABLE
+INSERT INTO DB_AUDIT.TEST_TABLE (USERNAME, EMAIL)
+VALUES ('TEST1', 'test1@EXAMPLE.COM');
+COMMIT;
+
+-- Update the TEST_TABLE table to trigger auditing
+UPDATE DB_AUDIT.TEST_TABLE
+SET EMAIL = 'newemail3@example.com'
+WHERE USERNAME = 'TEST1';
+COMMIT;
+
+-- Check if changes were logged in APP_AUDIT_DATA
+SELECT * FROM DB_AUDIT.APP_AUDIT_DATA;
+DELETE FROM DB_AUDIT.APP_AUDIT_DATA;
+
+
+-- Run the purge procedure manually for testing
+EXEC DB_AUDIT.PURGE_OLD_AUDIT_DATA;

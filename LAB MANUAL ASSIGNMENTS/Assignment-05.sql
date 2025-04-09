@@ -1,0 +1,10 @@
+-- 01. Find out the product which has been sold to ‘Ivan Sayross’.
+-- 02. Find out the product and their quantities that will have do delivered.
+-- 03. Find the product_no and description of moving products.
+-- 04. Find out the names of clients who have purchased ‘CD DRIVE’
+-- 05. List the product_no and s_order_no of customers haaving qty ordered less than 5 from the order details table for the product “1.44 floppies”.
+-- 06. Find the products and their quantities for the orders placed by ‘Vandan Saitwal’ and “Ivan Bayross”.
+-- 07. Find the products and their quantities for the orders placed by client_no “C00001” and “C00002”
+-- 08. Find the order No,, Client No and salesman No. where a client has been received by more than one salesman.
+-- 09. Display the s_order_date in the format “dd-mm-yy” e.g. “12-feb-96”
+-- 10. Find the date, 15 days after date.
